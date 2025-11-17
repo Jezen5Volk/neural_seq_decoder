@@ -104,7 +104,6 @@ def trainModel(args):
     startTime = time.time()
     for batch in range(args["nBatch"]):
         model.train()
-
         X, y, X_len, y_len, dayIdx = next(iter(trainLoader))
         X, y, X_len, y_len, dayIdx = (
             X.to(device),
@@ -141,10 +140,13 @@ def trainModel(args):
         optimizer.step()
         scheduler.step()
 
+        del loss, pred #free up this memory
+
         # print(endTime - startTime)
 
         # Eval
         if batch % 100 == 0:
+            #torch.cuda.empty_cache() #may cause problems, may also induce a speedup. Who knows!
             with torch.no_grad():
                 model.eval()
                 allLoss = []
@@ -174,7 +176,7 @@ def trainModel(args):
                     )
                     for iterIdx in range(pred.shape[0]):
                         decodedSeq = torch.argmax(
-                            torch.tensor(pred[iterIdx, 0 : adjustedLens[iterIdx], :]),
+                            pred[iterIdx, 0 : adjustedLens[iterIdx], :].clone().detach(),
                             dim=-1,
                         )  # [num_seq,]
                         decodedSeq = torch.unique_consecutive(decodedSeq, dim=-1)
