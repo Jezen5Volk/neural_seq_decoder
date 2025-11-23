@@ -12,3 +12,12 @@ pip install -e .
 1. Convert the speech BCI dataset using [formatCompetitionData.ipynb](./notebooks/formatCompetitionData.ipynb)
 2. Train model: `python ./scripts/train_model.py`
 
+
+
+
+#####################################################
+Samantha's Notes: 
+
+decoder_dataset is the processed version of the matlab data (meaning you don't have to download the matlab data from the dryad page nor do you need to run formatCompetitionData.ipynb)
+
+

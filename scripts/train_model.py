@@ -6,15 +6,15 @@ sys.path.append(root)
 modelName = 'speechBaseline4'
 
 args = {}
-args['outputDir'] = 'C:\\Users\\saman\\Documents\\Classes\\ECE 243A Brain Computer Interfaces\\Final Project\\outputs' + modelName
-args['datasetPath'] = 'C:\\Users\\saman\\Documents\\Classes\\ECE 243A Brain Computer Interfaces\\Final Project\\competitionData\\decoder_dataset'
+args['outputDir'] = root + 'outputs\\' + modelName
+args['datasetPath'] = root + '\\data\\decoder_dataset.pkl'
 args['seqLen'] = 150
 args['maxTimeSeriesLen'] = 1200
 args['batchSize'] = 64
 args['lrStart'] = 0.02
 args['lrEnd'] = 0.02
 args['nUnits'] = 1024
-args['nBatch'] = 10000 #3000
+args['nBatch'] = 102 #10000 #3000
 args['nLayers'] = 5
 args['seed'] = 0
 args['nClasses'] = 40

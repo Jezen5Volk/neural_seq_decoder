@@ -61,7 +61,7 @@ def trainModel(args):
     np.random.seed(args["seed"])
     device = "cuda"
 
-    with open(args["outputDir"] + "/args", "wb") as file:
+    with open(args["outputDir"] + "/args.pkl", "wb") as file:
         pickle.dump(args, file)
 
     trainLoader, testLoader, loadedData = getDatasetLoaders(
@@ -84,6 +84,7 @@ def trainModel(args):
     ).to(device)
 
     loss_ctc = torch.nn.CTCLoss(blank=0, reduction="mean", zero_infinity=True)
+
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=args["lrStart"],
@@ -203,7 +204,7 @@ def trainModel(args):
                 startTime = time.time()
 
             if len(testCER) > 0 and cer < np.min(testCER):
-                torch.save(model.state_dict(), args["outputDir"] + "/modelWeights")
+                torch.save(model.state_dict(), args["outputDir"] + "/modelWeights.pkl")
             testLoss.append(avgDayLoss)
             testCER.append(cer)
 
@@ -211,7 +212,7 @@ def trainModel(args):
             tStats["testLoss"] = np.array(testLoss)
             tStats["testCER"] = np.array(testCER)
 
-            with open(args["outputDir"] + "/trainingStats", "wb") as file:
+            with open(args["outputDir"] + "/trainingStats.pkl", "wb") as file:
                 pickle.dump(tStats, file)
 
 
