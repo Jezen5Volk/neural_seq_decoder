@@ -1,25 +1,26 @@
 import sys
-root = "C:\\Users\\saman\\Documents\\GitHub\\neural_seq_decoder\\"
+root = "C:\\Users\\saman\\Documents\\GitHub\\neural_seq_decoder\\" ##you will need to change this for operating on your system
 sys.path.append(root)
 
 
-modelName = 'speechBaseline4'
+modelName = 'speechBaseline_shreeram_params' #note that the params below are from shreeram.py file on bruinlearn -Samantha
+
 
 args = {}
 args['outputDir'] = root + 'outputs\\' + modelName
-args['datasetPath'] = root + '\\data\\decoder_dataset.pkl'
+args['datasetPath'] = "C:\\Users\\saman\\Documents\\Classes\\ECE 243A Brain Computer Interfaces\\Final Project\\competitionData\\decoder_dataset.pkl" ##you will need to change this for operating on your system
 args['seqLen'] = 150
 args['maxTimeSeriesLen'] = 1200
-args['batchSize'] = 64
-args['lrStart'] = 0.02
+args['batchSize'] = 128
+args['lrStart'] = 0.05
 args['lrEnd'] = 0.02
-args['nUnits'] = 1024
-args['nBatch'] = 102 #10000 #3000
+args['nUnits'] = 256
+args['nBatch'] = 10000 #3000
 args['nLayers'] = 5
 args['seed'] = 0
 args['nClasses'] = 40
 args['nInputFeatures'] = 256
-args['dropout'] = 0.4
+args['dropout'] = 0.2
 args['whiteNoiseSD'] = 0.8
 args['constantOffsetSD'] = 0.2
 args['gaussianSmoothWidth'] = 2.0
