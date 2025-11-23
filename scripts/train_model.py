@@ -1,9 +1,9 @@
 import sys
-root = "C:\\Users\\saman\\Documents\\GitHub\\neural_seq_decoder\\" ##you will need to change this for operating on your system
+root = "C:\\Users\\saman\\Documents\\GitHub\\neural_seq_decoder\\" ##you will need to change this for operating on your system -Samantha
 sys.path.append(root)
 
 
-modelName = 'speechBaseline_shreeram_params' #note that the params below are from shreeram.py file on bruinlearn -Samantha
+modelName = 'softDTW_debug' #note that the params below are from shreeram.py file on bruinlearn -Samantha
 
 
 args = {}
@@ -15,7 +15,7 @@ args['batchSize'] = 128
 args['lrStart'] = 0.05
 args['lrEnd'] = 0.02
 args['nUnits'] = 256
-args['nBatch'] = 10000 #3000
+args['nBatch'] = 102 #10000 #3000
 args['nLayers'] = 5
 args['seed'] = 0
 args['nClasses'] = 40
@@ -29,6 +29,6 @@ args['kernelLen'] = 32
 args['bidirectional'] = False
 args['l2_decay'] = 1e-5
 
-from src.neural_decoder.neural_decoder_trainer import trainModel
+from src.neural_decoder.neural_decoder_trainer_softdtw import trainModel
 
 trainModel(args)

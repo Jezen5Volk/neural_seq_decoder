@@ -43,6 +43,9 @@ class GRUDecoder(nn.Module):
         self.dayWeights = torch.nn.Parameter(torch.randn(nDays, neural_dim, neural_dim))
         self.dayBias = torch.nn.Parameter(torch.zeros(nDays, 1, neural_dim))
 
+        #for gumbel-softmax selection
+        self.phoneme_selector = torch.arange(0, 41, 1, device = self.device, dtype = torch.float32) 
+
         for x in range(nDays):
             self.dayWeights.data[x, :, :] = torch.eye(neural_dim)
 
@@ -120,4 +123,5 @@ class GRUDecoder(nn.Module):
 
         # get seq
         seq_out = self.fc_decoder_out(hid)
+
         return seq_out

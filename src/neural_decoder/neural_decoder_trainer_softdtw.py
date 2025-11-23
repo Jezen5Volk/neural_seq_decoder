@@ -8,9 +8,16 @@ import numpy as np
 import torch
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
+import torch.nn.functional as F
+
+
+import sys
+root = "C:\\Users\\saman\\Documents\\GitHub\\neural_seq_decoder\\" ##you will need to change this for operating on your system
+sys.path.append(root)
 
 from .model import GRUDecoder
 from .dataset import SpeechDataset
+from src.Soft_DTW_Loss.sdtw_cuda_loss import SoftDTW
 
 
 def getDatasetLoaders(
@@ -83,7 +90,7 @@ def trainModel(args):
         bidirectional=args["bidirectional"],
     ).to(device)
 
-    loss_ctc = torch.nn.CTCLoss(blank=0, reduction="mean", zero_infinity=True)
+    loss_dtw = SoftDTW(use_cuda = True, gamma = 0.1) 
 
     optimizer = torch.optim.Adam(
         model.parameters(),
@@ -126,13 +133,14 @@ def trainModel(args):
 
         # Compute prediction error
         pred = model.forward(X, dayIdx)
-
-        loss = loss_ctc(
-            torch.permute(pred.log_softmax(2), [1, 0, 2]),
+        phoneme_1hot = F.gumbel_softmax(pred.log_softmax(2), hard = True, dim = 2)
+        phoneme_output = phoneme_1hot @ model.phoneme_selector
+        print(phoneme_output.shape)
+        loss = loss_dtw(
+            phoneme_output,
             y,
-            ((X_len - model.kernelLen) / model.strideLen).to(torch.int32),
-            y_len,
         )
+        
         loss = torch.sum(loss)
 
         # Backpropagation
@@ -163,11 +171,9 @@ def trainModel(args):
                     )
 
                     pred = model.forward(X, testDayIdx)
-                    loss = loss_ctc(
+                    loss = loss_dtw(
                         torch.permute(pred.log_softmax(2), [1, 0, 2]),
                         y,
-                        ((X_len - model.kernelLen) / model.strideLen).to(torch.int32),
-                        y_len,
                     )
                     loss = torch.sum(loss)
                     allLoss.append(loss.cpu().detach().numpy())
