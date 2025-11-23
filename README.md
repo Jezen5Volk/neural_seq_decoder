@@ -14,10 +14,8 @@ pip install -e .
 
 
 
+## Samantha's Notes
+I used Shreeram's parameters from bruinlearn to train his (lightweight) version of the baseline. If you're curious what the original baseline parameters were, they're still on the original repo from the assignment (https://github.com/cffan/neural_seq_decoder)
 
-#####################################################
-Samantha's Notes: 
-
-decoder_dataset is the processed version of the matlab data (meaning you don't have to download the matlab data from the dryad page nor do you need to run formatCompetitionData.ipynb)
 
 
