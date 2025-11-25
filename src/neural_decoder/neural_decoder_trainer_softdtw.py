@@ -131,16 +131,20 @@ def trainModel(args):
             )
 
         # Compute prediction error
+        print(f"Batch {batch}: Pre-forward Pass")
         pred = model.forward(X, dayIdx)
+        print(f"Batch {batch}: Forward Pass Complete")
 
         #Perform gumbel_softmax hard selection to get differentiable argmax operation
         phoneme_1hot = F.gumbel_softmax(pred.log_softmax(2), hard = True, dim = 2)
         phoneme_output = phoneme_1hot @ model.phoneme_selector
+        print(f"Batch {batch}: Gumbel Softmax Complete")
         
         #Calculate Loss
         loss = batched_soft_edit_distance(phoneme_output, adjustedLens, y, y_len)
         loss = torch.sum(loss)/torch.sum(y_len)
         loss.requires_grad = True
+        print(f"Batch {batch}: Loss Calculation Complete")
 
         # Backpropagation
         optimizer.zero_grad()
@@ -149,9 +153,11 @@ def trainModel(args):
         scheduler.step()
 
         del loss, pred #free up this memory
+        
+
+        print(f"Batch {batch} Completed")
     
-
-
+        
         # Eval
         if batch % 100 == 0:
             #torch.cuda.empty_cache() #may cause problems, may also induce a speedup. Who knows!
@@ -223,7 +229,7 @@ def trainModel(args):
 
             with open(args["outputDir"] + "/trainingStats.pkl", "wb") as file:
                 pickle.dump(tStats, file)
-        
+            
 
 
 def loadModel(modelDir, nInputLayers=24, device="cuda"):
