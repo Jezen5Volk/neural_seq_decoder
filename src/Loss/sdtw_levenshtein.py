@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 
 # Default regularization parameter
-DEFAULT_GAMMA = 0.05
+DEFAULT_GAMMA = 0.04
 DEFAULT_BLANK = 0
 
 def logsumexp_k(tensors, gamma=DEFAULT_GAMMA):
@@ -11,18 +11,28 @@ def logsumexp_k(tensors, gamma=DEFAULT_GAMMA):
     
     This is the differentiable replacement for the min operation.
     The soft-minimum is calculated as: -gamma * log(sum(exp(-t_i / gamma)))
+
+    To ensure stability, use the trick of subtracting the maximum
     """
     if not tensors:
         raise ValueError("Input list of tensors cannot be empty.")
     
-    # Initialize LSE with the first tensor
-    lse_result = tensors[0] / gamma
+    # Scale inputs
+    scaled_tensors = [t / gamma for t in tensors]
     
-    # Iteratively apply torch.logaddexp for stability
-    for i in range(1, len(tensors)):
-        lse_result = torch.logaddexp(lse_result, tensors[i] / gamma)
+    # Stack them into a single tensor (3, B)
+    stacked = torch.stack(scaled_tensors, dim=0) 
+    
+    # Find the maximum value M across the options (dim 0) for stability
+    M, _ = torch.max(stacked, dim=0, keepdim=True) # (1, B)
+
+    # Compute the stable LSE: log(sum(exp(x - M))) + M
+    # (x - M) is now guaranteed to be non-positive, preventing overflow.
+    lse_result = torch.log(torch.sum(torch.exp(stacked - M), dim=0)) + M.squeeze(0)
         
+    # Rescale back by gamma
     return lse_result * gamma
+        
 
 def batched_soft_edit_distance(
     input_seqs: torch.Tensor,

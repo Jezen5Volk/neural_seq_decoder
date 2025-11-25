@@ -157,7 +157,7 @@ def trainModel(args):
 
         print(f"Batch {batch} Completed")
     
-        
+        '''
         # Eval
         if batch % 100 == 0:
             #torch.cuda.empty_cache() #may cause problems, may also induce a speedup. Who knows!
@@ -229,7 +229,7 @@ def trainModel(args):
 
             with open(args["outputDir"] + "/trainingStats.pkl", "wb") as file:
                 pickle.dump(tStats, file)
-            
+            '''
 
 
 def loadModel(modelDir, nInputLayers=24, device="cuda"):
