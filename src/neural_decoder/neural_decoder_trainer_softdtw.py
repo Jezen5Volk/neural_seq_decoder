@@ -2,8 +2,8 @@ import os
 import pickle
 import time
 
-from edit_distance import SequenceMatcher
-import hydra
+from edit_distance import SequenceMatcher # pyright: ignore[reportMissingImports]
+import hydra # type: ignore
 import numpy as np
 import torch
 from torch.nn.utils.rnn import pad_sequence
@@ -17,7 +17,7 @@ sys.path.append(root)
 
 from .model import GRUDecoder
 from .dataset import SpeechDataset
-from src.Soft_DTW_Loss.sdtw_cuda_loss import SoftDTW
+from src.Loss.sdtw_levenshtein import batched_soft_edit_distance
 
 
 def getDatasetLoaders(
@@ -90,8 +90,6 @@ def trainModel(args):
         bidirectional=args["bidirectional"],
     ).to(device)
 
-    loss_dtw = SoftDTW(use_cuda = True, gamma = 0.1) 
-
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=args["lrStart"],
@@ -120,6 +118,7 @@ def trainModel(args):
             y_len.to(device),
             dayIdx.to(device),
         )
+        adjustedLens = ((X_len - model.kernelLen) / model.strideLen).to(torch.int32)
 
         # Noise augmentation is faster on GPU
         if args["whiteNoiseSD"] > 0:
@@ -133,15 +132,15 @@ def trainModel(args):
 
         # Compute prediction error
         pred = model.forward(X, dayIdx)
+
+        #Perform gumbel_softmax hard selection to get differentiable argmax operation
         phoneme_1hot = F.gumbel_softmax(pred.log_softmax(2), hard = True, dim = 2)
         phoneme_output = phoneme_1hot @ model.phoneme_selector
-        print(phoneme_output.shape)
-        loss = loss_dtw(
-            phoneme_output,
-            y,
-        )
         
-        loss = torch.sum(loss)
+        #Calculate Loss
+        loss = batched_soft_edit_distance(phoneme_output, adjustedLens, y, y_len)
+        loss = torch.sum(loss)/torch.sum(y_len)
+        loss.requires_grad = True
 
         # Backpropagation
         optimizer.zero_grad()
@@ -150,8 +149,8 @@ def trainModel(args):
         scheduler.step()
 
         del loss, pred #free up this memory
+    
 
-        # print(endTime - startTime)
 
         # Eval
         if batch % 100 == 0:
@@ -169,18 +168,22 @@ def trainModel(args):
                         y_len.to(device),
                         testDayIdx.to(device),
                     )
-
-                    pred = model.forward(X, testDayIdx)
-                    loss = loss_dtw(
-                        torch.permute(pred.log_softmax(2), [1, 0, 2]),
-                        y,
-                    )
-                    loss = torch.sum(loss)
-                    allLoss.append(loss.cpu().detach().numpy())
-
                     adjustedLens = ((X_len - model.kernelLen) / model.strideLen).to(
                         torch.int32
                     )
+
+                    pred = model.forward(X, testDayIdx)
+                    phoneme_output = torch.argmax(pred.log_softmax(2), dim = 2)
+                    
+                    loss = batched_soft_edit_distance(
+                        phoneme_output,
+                        adjustedLens,
+                        y,
+                        y_len
+                    )
+                    loss = torch.sum(loss)/torch.sum(y_len)
+                    allLoss.append(loss.cpu().detach().numpy())
+
                     for iterIdx in range(pred.shape[0]):
                         decodedSeq = torch.argmax(
                             pred[iterIdx, 0 : adjustedLens[iterIdx], :].clone().detach(),
@@ -205,7 +208,7 @@ def trainModel(args):
 
                 endTime = time.time()
                 print(
-                    f"batch {batch}, ctc loss: {avgDayLoss:>7f}, cer: {cer:>7f}, time/batch: {(endTime - startTime)/100:>7.3f}"
+                    f"batch {batch}, SDTW Levenshtein loss: {avgDayLoss:>7f}, cer: {cer:>7f}, time/batch: {(endTime - startTime)/100:>7.3f}"
                 )
                 startTime = time.time()
 
@@ -220,6 +223,7 @@ def trainModel(args):
 
             with open(args["outputDir"] + "/trainingStats.pkl", "wb") as file:
                 pickle.dump(tStats, file)
+        
 
 
 def loadModel(modelDir, nInputLayers=24, device="cuda"):
