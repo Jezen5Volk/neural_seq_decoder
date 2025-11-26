@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 
 # Default regularization parameter
-DEFAULT_GAMMA = 0.04
+DEFAULT_GAMMA = 0.5
 DEFAULT_BLANK = 0
 
 def logsumexp_k(tensors, gamma=DEFAULT_GAMMA):
@@ -12,30 +12,19 @@ def logsumexp_k(tensors, gamma=DEFAULT_GAMMA):
     This is the differentiable replacement for the min operation.
     The soft-minimum is calculated as: -gamma * log(sum(exp(-t_i / gamma)))
 
-    To ensure stability, use the trick of subtracting the maximum
+    To ensure stability, use the trick of subtracting the maximum, as in the paper
     """
-    if not tensors:
-        raise ValueError("Input list of tensors cannot be empty.")
-    
-    # Scale inputs
-    scaled_tensors = [t / gamma for t in tensors]
-    
-    # Stack them into a single tensor (3, B)
-    stacked = torch.stack(scaled_tensors, dim=0) 
-    
-    # Find the maximum value M across the options (dim 0) for stability
-    M, _ = torch.max(stacked, dim=0, keepdim=True) # (1, B)
 
-    # Compute the stable LSE: log(sum(exp(x - M))) + M
-    # (x - M) is now guaranteed to be non-positive, preventing overflow.
-    lse_result = torch.log(torch.sum(torch.exp(stacked - M), dim=0)) + M.squeeze(0)
+    scaled_tensors = -1*torch.stack(tensors, dim = 0)/gamma
+    M, _ = torch.max(scaled_tensors, dim = 0, keepdim = True)
+    lse_result = torch.logsumexp(scaled_tensors - M, dim = 0) + M.squeeze(0)
+
+    return lse_result*gamma*-1
         
-    # Rescale back by gamma
-    return lse_result * gamma
-        
+
 
 def batched_soft_edit_distance(
-    input_seqs: torch.Tensor,
+    input_logprob: torch.Tensor,
     input_lengths: torch.Tensor,   
     target_seqs: torch.Tensor,
     target_lengths: torch.Tensor, 
@@ -47,7 +36,7 @@ def batched_soft_edit_distance(
     handling padded sequences for both input and target.
 
     Args:
-        input_seqs (torch.Tensor): The source sequences (Batch, L1_max)
+        input_logprob (torch.Tensor): The source log probabilities (as calculated by softmax) (Batch, L1_max, C)
         input_lengths (torch.Tensor): The true, unpadded length of each input sequence (Batch,)
         target_seqs (torch.Tensor): The target sequences (Batch, L2_max)
         target_lengths (torch.Tensor): The true, unpadded length of each target sequence (Batch,)
@@ -58,107 +47,72 @@ def batched_soft_edit_distance(
         torch.Tensor: A tensor of shape (Batch,) containing the soft edit distance 
                       for each sequence pair, evaluated at its true end point.
     """
-    B, L1 = input_seqs.shape
+    B, L1, C = input_logprob.shape
     _, L2 = target_seqs.shape
+    dtype = input_logprob.dtype 
+    target_1hot = F.one_hot(target_seqs, C)
 
-    #--- Convert all sequences to torch.int64 or long for stability ---
-    dtype = input_seqs.dtype #preserve float dtype for D matrix
-    input_seqs_id = input_seqs.long()
-    target_seqs_id = target_seqs.long()
-    blank_token_id_long = torch.tensor(blank_token_id, device=input_seqs.device, dtype=torch.long)
-    
-    # --- Initialize DP Table D ---
     # D[b, i, j] holds the soft edit distance for the b-th pair of sequences 
     # seq1[:i] and seq2[:j]. D is initialized with zeros and has dimensions (B, L1+1, L2+1).
-    D = torch.zeros((B, L1 + 1, L2 + 1), device=input_seqs.device, dtype=dtype)
+    D = torch.zeros((B, L1 + 1, L2 + 1), device=input_logprob.device, dtype=dtype)
     
     # Create masks for length checks
     # Index tensors for i and j (1-based indices corresponding to D table)
-    i_indices = torch.arange(1, L1 + 1, device=input_seqs.device).unsqueeze(0).repeat(B, 1) # (B, L1)
-    j_indices = torch.arange(1, L2 + 1, device=input_seqs.device).unsqueeze(0).repeat(B, 1) # (B, L2)
+    i_indices = torch.arange(1, L1 + 1, device=input_logprob.device).unsqueeze(0).repeat(B, 1) # (B, L1)
+    j_indices = torch.arange(1, L2 + 1, device=input_logprob.device).unsqueeze(0).repeat(B, 1) # (B, L2)
     
     # Mask: 1.0 if (i, j) is inside the unpadded sequence boundaries, 0.0 otherwise.
-    # Note: We only need the j-mask in the loop, but i-mask is useful for border init.
+    # Note: Only need the j-mask in the loop, but i-mask is useful for border init.
     input_mask = (i_indices <= input_lengths.unsqueeze(1)).to(dtype)  # (B, L1)
     target_mask = (j_indices <= target_lengths.unsqueeze(1)).to(dtype) # (B, L2)
     
-    # --- Initialize Borders (Insertion/Deletion) ---
-    # Calculate DelCost for all input tokens (1 for non-blank, 0 for blank)
-    is_blank = (input_seqs == blank_token_id_long).to(dtype)
-    del_costs_raw = 1.0 - is_blank  # (B, L1) - DelCost[b, i-1]
-    
-    # Crucial: Zero out costs corresponding to padded parts of the input sequence
-    del_costs = del_costs_raw * input_mask # (B, L1) - Cost is only applied if within true length
+    # Calculate del cost for all input tokens from probability of token being blank token
+    del_costs_raw = 1.0 - torch.exp(input_logprob[:, :, blank_token_id]) # (B, L1) 
+    del_costs = del_costs_raw * input_mask # Zero out costs corresponding to padded/masked parts of the input sequence
 
     # Calculate the cumulative deletion cost for the first column D[i, 0]
     D[:, 1:, 0] = torch.cumsum(del_costs, dim=1)
     
     # Initial costs for the first row (i = 0, j > 0) are accumulated insertions.
-    # Insertion cost is 1.0. We mask this cost based on the target length.
     insertion_costs = torch.ones_like(j_indices, dtype=dtype) # (B, L2)
-    insertion_costs_masked = insertion_costs * target_mask
+    insertion_costs_masked = insertion_costs * target_mask # Mask this cost based on the target length.
     D[:, 0, 1:] = torch.cumsum(insertion_costs_masked, dim=1)
 
-    # --- Compute Substitution/Match Cost C ---
-    # Check if tokens mismatch (1.0 for mismatch, 0.0 for match)
-    mismatch_indicator = (input_seqs.unsqueeze(2) != target_seqs.unsqueeze(1)).to(dtype) # (B, L1, L2)
-    
-    # Sub/Match cost is 1.0 only if mismatch AND both tokens are within their true lengths.
+    # Substitution/Match Cost C (ensure high cost when input logits do not align with 1hot target)
     # The mask for C[i, j] is input_mask[i-1] * target_mask[j-1]
     cost_mask = input_mask.unsqueeze(2) * target_mask.unsqueeze(1) # (B, L1, 1) * (B, 1, L2) -> (B, L1, L2)
-
-    C_raw = mismatch_indicator * cost_mask # Only calculate cost within true boundaries
+    C_ij_tilde_raw = -input_logprob * target_1hot.mT # (B, L1, C) * (B, C, L2) --> (B, L1, L2)
+    C_ij_tilde =  C_ij_tilde_raw*cost_mask # Only calculate cost within true boundaries
     
-    # C is padded by 1 at the start of L1 and L2 for easier indexing
-    C = F.pad(C_raw, (1, 0, 1, 0)) # (B, L1+1, L2+1)
-    
-    # --- Dynamic Programming (Batched) ---
+    # Recurrent Programming to Generate D[i,j]
     for i in range(1, L1 + 1):
         for j in range(1, L2 + 1):
             
             # Mask checks if the current cell D[i, j] should be calculated
-            # We only calculate if i is within L1 AND j is within L2 (for this batch element)
             current_mask = (i_indices[:, i-1] <= input_lengths) * (j_indices[:, j-1] <= target_lengths)
             
-            # If current_mask is 0, we should skip the calculation for that batch element,
-            # but since we cannot skip steps in a batched DP, we ensure T_del, T_ins, T_sub
-            # are extremely large (or the previous D value is maintained) when masked.
-            
-            # --- Recurrence Paths ---
-            current_del_cost = del_costs_raw[:, i - 1] # Cost of deleting input token i (0 or 1)
-            
-            # Deletion Path (from D[i-1, j])
-            # Note: We use del_costs_raw here because the DP table D[:, i-1, j] already holds 
-            # the accumulated cost up to the boundary. We only add the cost of deleting token i.
-            T_del = D[:, i - 1, j] + current_del_cost  # (B,)
+            #Deletion Path (from D[i-1, j])
+            T_del = D[:, i - 1, j] + del_costs[:, i - 1]  # (B,)
 
             # Insertion Path (from D[i, j-1])
             T_ins = D[:, i, j - 1] + 1.0  # (B,)
             
             # Substitution/Match Path (from D[i-1, j-1])
-            T_sub = D[:, i - 1, j - 1] + C_raw[:, i-1, j-1] # (B,)
+            T_sub = D[:, i - 1, j - 1] + C_ij_tilde[:, i-1, j-1] # (B,)
             
             # Calculate the smooth minimum (log-sum-exp)
-            D_new = logsumexp_k([T_del, T_ins, T_sub], gamma=gamma)
+            D_ij = logsumexp_k([T_del, T_ins, T_sub], gamma=gamma) 
 
-            # Apply the mask: only update D[i, j] for sequences where i and j are within the true length.
-            # If masked (current_mask=0), D[i, j] retains its previous value (0.0).
-            # This is technically fine since the final gather operation will only read from the true end cell.
-            # However, for robustness, let's only update if the cell is valid.
-            
-            # Use torch.where to apply the mask explicitly to stop accumulating costs in the padded area:
+            # apply the mask explicitly to stop accumulating costs in the padded area:
             D[:, i, j] = torch.where(
-                current_mask.bool(), # Condition: Is the (i,j) cell valid for this batch element?
-                D_new,              # True: Use the calculated soft distance D_new
-                D[:, i, j]          # False: Keep the initial value (0.0)
+                current_mask.bool(),
+                D_ij,              
+                torch.zeros_like(D_ij) #when false, will keep D_ij init value of zero
             )
 
-
-    # --- Final Distance Extraction ---
-    # We want to extract D[b, input_lengths[b], target_lengths[b]].
-    # This point (L1_true, L2_true) is the only required distance path endpoint.
-    # Create indices for all batch elements, then index through D
-    batch_indices = torch.arange(B, device=input_seqs.device).long()
+    # Distance extraction from D matrix
+    batch_indices = torch.arange(B, device=input_logprob.device).long()
     final_distances = D[batch_indices, input_lengths.long(), target_lengths.long()]
-    
+
+
     return final_distances

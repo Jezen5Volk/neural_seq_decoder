@@ -1,6 +1,7 @@
 import os
 import pickle
 import time
+import gc
 
 from edit_distance import SequenceMatcher # pyright: ignore[reportMissingImports]
 import hydra # type: ignore
@@ -134,14 +135,9 @@ def trainModel(args):
         print(f"Batch {batch}: Pre-forward Pass")
         pred = model.forward(X, dayIdx)
         print(f"Batch {batch}: Forward Pass Complete")
-
-        #Perform gumbel_softmax hard selection to get differentiable argmax operation
-        phoneme_1hot = F.gumbel_softmax(pred.log_softmax(2), hard = True, dim = 2)
-        phoneme_output = phoneme_1hot @ model.phoneme_selector
-        print(f"Batch {batch}: Gumbel Softmax Complete")
         
         #Calculate Loss
-        loss = batched_soft_edit_distance(phoneme_output, adjustedLens, y, y_len)
+        loss = batched_soft_edit_distance(F.log_softmax(pred, dim = -1), adjustedLens, y, y_len)
         loss = torch.sum(loss)/torch.sum(y_len)
         loss.requires_grad = True
         print(f"Batch {batch}: Loss Calculation Complete")
@@ -153,14 +149,13 @@ def trainModel(args):
         scheduler.step()
 
         del loss, pred #free up this memory
+        gc.collect()
         
 
         print(f"Batch {batch} Completed")
     
-        '''
         # Eval
-        if batch % 100 == 0:
-            #torch.cuda.empty_cache() #may cause problems, may also induce a speedup. Who knows!
+        if batch % 100 == 0: 
             with torch.no_grad():
                 model.eval()
                 allLoss = []
@@ -179,10 +174,9 @@ def trainModel(args):
                     )
 
                     pred = model.forward(X, testDayIdx)
-                    phoneme_output = torch.argmax(pred.log_softmax(2), dim = 2)
                     
                     loss = batched_soft_edit_distance(
-                        phoneme_output,
+                        F.log_softmax(pred, dim = -1),
                         adjustedLens,
                         y,
                         y_len
@@ -194,10 +188,9 @@ def trainModel(args):
                         decodedSeq = torch.argmax(
                             pred[iterIdx, 0 : adjustedLens[iterIdx], :].clone().detach(),
                             dim=-1,
-                        )  # [num_seq,]
-                        decodedSeq = torch.unique_consecutive(decodedSeq, dim=-1)
+                        )  
+                        decodedSeq = decodedSeq[decodedSeq.nonzero(as_tuple=True)]
                         decodedSeq = decodedSeq.cpu().detach().numpy()
-                        decodedSeq = np.array([i for i in decodedSeq if i != 0])
 
                         trueSeq = np.array(
                             y[iterIdx][0 : y_len[iterIdx]].cpu().detach()
@@ -229,7 +222,10 @@ def trainModel(args):
 
             with open(args["outputDir"] + "/trainingStats.pkl", "wb") as file:
                 pickle.dump(tStats, file)
-            '''
+            
+            #Empty Cache at the end of eval 
+            torch.cuda.empty_cache()
+            
 
 
 def loadModel(modelDir, nInputLayers=24, device="cuda"):
