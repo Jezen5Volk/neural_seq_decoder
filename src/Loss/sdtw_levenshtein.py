@@ -50,7 +50,7 @@ def batched_soft_edit_distance(
     B, L1, C = input_logprob.shape
     _, L2 = target_seqs.shape
     dtype = input_logprob.dtype 
-    target_1hot = F.one_hot(target_seqs, C)
+    target_1hot = F.one_hot(target_seqs.long(), C).to(dtype)
 
     # D[b, i, j] holds the soft edit distance for the b-th pair of sequences 
     # seq1[:i] and seq2[:j]. D is initialized with zeros and has dimensions (B, L1+1, L2+1).
@@ -81,7 +81,7 @@ def batched_soft_edit_distance(
     # Substitution/Match Cost C (ensure high cost when input logits do not align with 1hot target)
     # The mask for C[i, j] is input_mask[i-1] * target_mask[j-1]
     cost_mask = input_mask.unsqueeze(2) * target_mask.unsqueeze(1) # (B, L1, 1) * (B, 1, L2) -> (B, L1, L2)
-    C_ij_tilde_raw = -input_logprob * target_1hot.mT # (B, L1, C) * (B, C, L2) --> (B, L1, L2)
+    C_ij_tilde_raw = -input_logprob @ target_1hot.mT # (B, L1, C) @ (B, C, L2) --> (B, L1, L2)
     C_ij_tilde =  C_ij_tilde_raw*cost_mask # Only calculate cost within true boundaries
     
     # Recurrent Programming to Generate D[i,j]

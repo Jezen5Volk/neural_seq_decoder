@@ -139,8 +139,7 @@ def trainModel(args):
         #Calculate Loss
         loss = batched_soft_edit_distance(F.log_softmax(pred, dim = -1), adjustedLens, y, y_len)
         loss = torch.sum(loss)/torch.sum(y_len)
-        loss.requires_grad = True
-        print(f"Batch {batch}: Loss Calculation Complete")
+        print(f"Batch {batch}: Loss Calculation Complete, Loss: {loss}")
 
         # Backpropagation
         optimizer.zero_grad()
