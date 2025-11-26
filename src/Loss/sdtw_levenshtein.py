@@ -17,7 +17,7 @@ def logsumexp_k(tensors, gamma=DEFAULT_GAMMA):
 
     scaled_tensors = -1*torch.stack(tensors, dim = 0)/gamma
     M, _ = torch.max(scaled_tensors, dim = 0, keepdim = True)
-    lse_result = torch.logsumexp(scaled_tensors - M, dim = 0) + M.squeeze(0)
+    lse_result = torch.logsumexp(scaled_tensors - M, dim = 0) + M.squeeze(dim = 0)
 
     return lse_result*gamma*-1
         
@@ -94,20 +94,11 @@ def batched_soft_edit_distance(
         i = torch.arange(max(1, k - L2), min(k-1, L1) + 1, device = device) 
         j = k*torch.ones_like(i) - i
 
-
-        print(i.shape, j.shape)
-        print(i_indices.shape)
-        print(i_indices[:, i-1].shape)
         # Mask checks if the current cell D[i, j] should be calculated
-
-        
         current_mask = (i_indices[:, i-1].T <= input_lengths).T * (j_indices[:, j-1].T <= target_lengths).T
         
         #Deletion Path (from D[i-1, j])
         T_del = D[:, i - 1, j] + del_costs[:, i - 1]  # (B,)
-
-        print(T_del.shape)
-        print(current_mask.shape)
 
         # Insertion Path (from D[i, j-1])
         T_ins = D[:, i, j - 1] + 1.0  # (B,)
@@ -116,7 +107,7 @@ def batched_soft_edit_distance(
         T_sub = D[:, i - 1, j - 1] + C_ij_tilde[:, i-1, j-1] # (B,)
         
         # Calculate the smooth minimum (log-sum-exp)
-        D_ij = logsumexp_k([T_del, T_ins, T_sub], gamma=gamma).squeeze()
+        D_ij = logsumexp_k([T_del, T_ins, T_sub], gamma=gamma)
 
         # apply the mask explicitly to stop accumulating costs in the padded area:
         D[:, i, j] = torch.where(
