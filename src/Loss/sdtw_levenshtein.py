@@ -50,6 +50,7 @@ def batched_soft_edit_distance(
     B, L1, C = input_logprob.shape
     _, L2 = target_seqs.shape
     dtype = input_logprob.dtype 
+    device = input_logprob.device
     target_1hot = F.one_hot(target_seqs.long(), C).to(dtype)
 
     # D[b, i, j] holds the soft edit distance for the b-th pair of sequences 
@@ -84,6 +85,51 @@ def batched_soft_edit_distance(
     C_ij_tilde_raw = -input_logprob @ target_1hot.mT # (B, L1, C) @ (B, C, L2) --> (B, L1, L2)
     C_ij_tilde =  C_ij_tilde_raw*cost_mask # Only calculate cost within true boundaries
     
+
+    #'''
+    # Recurrent Programming to Generate D[i, j]
+    for k in range(2, L1 + L2 + 1):
+        
+        #Anti-diagonal indices constrained by i + j = k
+        i = torch.arange(max(1, k - L2), min(k-1, L1) + 1, device = device) 
+        j = k*torch.ones_like(i) - i
+
+
+        print(i.shape, j.shape)
+        print(i_indices.shape)
+        print(i_indices[:, i-1].shape)
+        # Mask checks if the current cell D[i, j] should be calculated
+
+        
+        current_mask = (i_indices[:, i-1].T <= input_lengths).T * (j_indices[:, j-1].T <= target_lengths).T
+        
+        #Deletion Path (from D[i-1, j])
+        T_del = D[:, i - 1, j] + del_costs[:, i - 1]  # (B,)
+
+        print(T_del.shape)
+        print(current_mask.shape)
+
+        # Insertion Path (from D[i, j-1])
+        T_ins = D[:, i, j - 1] + 1.0  # (B,)
+        
+        # Substitution/Match Path (from D[i-1, j-1])
+        T_sub = D[:, i - 1, j - 1] + C_ij_tilde[:, i-1, j-1] # (B,)
+        
+        # Calculate the smooth minimum (log-sum-exp)
+        D_ij = logsumexp_k([T_del, T_ins, T_sub], gamma=gamma).squeeze()
+
+        # apply the mask explicitly to stop accumulating costs in the padded area:
+        D[:, i, j] = torch.where(
+            current_mask.bool(),
+            D_ij,              
+            torch.zeros_like(D_ij) #when false, will keep D_ij init value of zero
+        )
+    #'''
+
+
+
+
+    '''
     # Recurrent Programming to Generate D[i,j]
     for i in range(1, L1 + 1):
         for j in range(1, L2 + 1):
@@ -109,6 +155,7 @@ def batched_soft_edit_distance(
                 D_ij,              
                 torch.zeros_like(D_ij) #when false, will keep D_ij init value of zero
             )
+    '''
 
     # Distance extraction from D matrix
     batch_indices = torch.arange(B, device=input_logprob.device).long()
