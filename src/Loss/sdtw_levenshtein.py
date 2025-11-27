@@ -1,8 +1,8 @@
 import torch
 import torch.nn.functional as F
 
-# Default regularization parameter
-DEFAULT_GAMMA = 0.5
+# Default regularization parameter(s)
+DEFAULT_GAMMA = 1e-6
 DEFAULT_BLANK = 0
 
 def logsumexp_k(tensors, gamma=DEFAULT_GAMMA):
@@ -29,19 +29,20 @@ def batched_soft_edit_distance(
     target_seqs: torch.Tensor,
     target_lengths: torch.Tensor, 
     blank_token_id: int = DEFAULT_BLANK,
-    gamma: float = DEFAULT_GAMMA
+    gamma: float = DEFAULT_GAMMA,
 ) -> torch.Tensor:
     """
     Calculates the Batched Soft Levenshtein Edit Distance, 
     handling padded sequences for both input and target.
 
     Args:
-        input_logprob (torch.Tensor): The source log probabilities (as calculated by softmax) (Batch, L1_max, C)
+        input_logprob (torch.Tensor): The source log probabilities (as calculated by softmax) (Batch, L1_max, Classes)
         input_lengths (torch.Tensor): The true, unpadded length of each input sequence (Batch,)
         target_seqs (torch.Tensor): The target sequences (Batch, L2_max)
         target_lengths (torch.Tensor): The true, unpadded length of each target sequence (Batch,)
-        blank_token_id (int): The token ID in input_seqs whose deletion cost is 0
+        blank_token_id (int): The token ID in input_seqs whose deletion cost should be approximately zero 
         gamma (float): Regularization parameter for the soft-minimum
+        alpha (float): Regularization parameter for the delete cost to prevent mode collapse
 
     Returns:
         torch.Tensor: A tensor of shape (Batch,) containing the soft edit distance 
@@ -86,7 +87,6 @@ def batched_soft_edit_distance(
     C_ij_tilde =  C_ij_tilde_raw*cost_mask # Only calculate cost within true boundaries
     
 
-    #'''
     # Recurrent Programming to Generate D[i, j]
     for k in range(2, L1 + L2 + 1):
         
@@ -115,38 +115,7 @@ def batched_soft_edit_distance(
             D_ij,              
             torch.zeros_like(D_ij) #when false, will keep D_ij init value of zero
         )
-    #'''
-
-
-
-
-    '''
-    # Recurrent Programming to Generate D[i,j]
-    for i in range(1, L1 + 1):
-        for j in range(1, L2 + 1):
-            
-            # Mask checks if the current cell D[i, j] should be calculated
-            current_mask = (i_indices[:, i-1] <= input_lengths) * (j_indices[:, j-1] <= target_lengths)
-            
-            #Deletion Path (from D[i-1, j])
-            T_del = D[:, i - 1, j] + del_costs[:, i - 1]  # (B,)
-
-            # Insertion Path (from D[i, j-1])
-            T_ins = D[:, i, j - 1] + 1.0  # (B,)
-            
-            # Substitution/Match Path (from D[i-1, j-1])
-            T_sub = D[:, i - 1, j - 1] + C_ij_tilde[:, i-1, j-1] # (B,)
-            
-            # Calculate the smooth minimum (log-sum-exp)
-            D_ij = logsumexp_k([T_del, T_ins, T_sub], gamma=gamma) 
-
-            # apply the mask explicitly to stop accumulating costs in the padded area:
-            D[:, i, j] = torch.where(
-                current_mask.bool(),
-                D_ij,              
-                torch.zeros_like(D_ij) #when false, will keep D_ij init value of zero
-            )
-    '''
+    
 
     # Distance extraction from D matrix
     batch_indices = torch.arange(B, device=input_logprob.device).long()

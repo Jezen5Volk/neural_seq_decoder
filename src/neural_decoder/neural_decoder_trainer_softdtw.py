@@ -19,6 +19,7 @@ sys.path.append(root)
 from .model import GRUDecoder
 from .dataset import SpeechDataset
 from src.Loss.sdtw_levenshtein import batched_soft_edit_distance
+from src.Loss.regularization import sequence_length_regularization
 
 
 def getDatasetLoaders(
@@ -132,14 +133,13 @@ def trainModel(args):
             )
 
         # Compute prediction error
-        print(f"Batch {batch}: Pre-forward Pass")
         pred = model.forward(X, dayIdx)
-        print(f"Batch {batch}: Forward Pass Complete")
         
         #Calculate Loss
-        loss = batched_soft_edit_distance(F.log_softmax(pred, dim = -1), adjustedLens, y, y_len)
-        loss = torch.sum(loss)/torch.sum(y_len)
-        print(f"Batch {batch}: Loss Calculation Complete, Loss: {loss}")
+        loss_levenshtein = batched_soft_edit_distance(F.log_softmax(pred, dim = -1), adjustedLens, y, y_len)
+        loss_reg = sequence_length_regularization(F.log_softmax(pred, dim = -1), y_len)
+        loss = loss_levenshtein/y_len + loss_reg*args["lambda"]
+        loss = torch.mean(loss)
 
         # Backpropagation
         optimizer.zero_grad()
@@ -147,12 +147,11 @@ def trainModel(args):
         optimizer.step()
         scheduler.step()
 
+        print(f"Batch {batch} Complete; Soft DTW Levenshtein Loss: {loss}")
+
         del loss, pred #free up this memory
         gc.collect()
         
-
-        print(f"Batch {batch} Completed")
-    
         # Eval
         if batch % 100 == 0: 
             with torch.no_grad():
@@ -160,6 +159,7 @@ def trainModel(args):
                 allLoss = []
                 total_edit_distance = 0
                 total_seq_length = 0
+                val_idx = 0
                 for X, y, X_len, y_len, testDayIdx in testLoader:
                     X, y, X_len, y_len, testDayIdx = (
                         X.to(device),
@@ -174,39 +174,46 @@ def trainModel(args):
 
                     pred = model.forward(X, testDayIdx)
                     
-                    loss = batched_soft_edit_distance(
-                        F.log_softmax(pred, dim = -1),
-                        adjustedLens,
-                        y,
-                        y_len
-                    )
-                    loss = torch.sum(loss)/torch.sum(y_len)
-                    allLoss.append(loss.cpu().detach().numpy())
+                    #Calculate Loss
+                    loss_levenshtein = batched_soft_edit_distance(F.log_softmax(pred, dim = -1), adjustedLens, y, y_len)
+                    loss_reg = sequence_length_regularization(F.log_softmax(pred, dim = -1), y_len)
+                    loss = loss_levenshtein/y_len + loss_reg*args["lambda"]
+                    loss = torch.mean(loss)
+
+                    allLoss.append(loss.item())
 
                     for iterIdx in range(pred.shape[0]):
-                        decodedSeq = torch.argmax(
-                            pred[iterIdx, 0 : adjustedLens[iterIdx], :].clone().detach(),
-                            dim=-1,
-                        )  
-                        decodedSeq = decodedSeq[decodedSeq.nonzero(as_tuple=True)]
-                        decodedSeq = decodedSeq.cpu().detach().numpy()
+                        decodedSeq = torch.argmax(pred, dim = -1)
+                        decodedSeq = decodedSeq[iterIdx, 0 : adjustedLens[iterIdx]]
 
+                        if iterIdx == 0 and val_idx == 0:
+                            print("Sample Decoded Sequence prior to removing blank tokens:")
+                            print(decodedSeq)
+            
+                        decodedSeq = decodedSeq[decodedSeq.nonzero(as_tuple=True)]
+                        decodedSeq = decodedSeq.cpu().numpy()
+                    
                         trueSeq = np.array(
-                            y[iterIdx][0 : y_len[iterIdx]].cpu().detach()
+                            y[iterIdx][0 : y_len[iterIdx]].cpu()
                         )
+
+                        if iterIdx ==  0 and val_idx == 0: 
+                            print("Sample Decoded Sequence:", decodedSeq)
+                            print("Sample True Sequence:", trueSeq)
 
                         matcher = SequenceMatcher(
                             a=trueSeq.tolist(), b=decodedSeq.tolist()
                         )
                         total_edit_distance += matcher.distance()
                         total_seq_length += len(trueSeq)
+                    val_idx += 1
 
                 avgDayLoss = np.sum(allLoss) / len(testLoader)
                 cer = total_edit_distance / total_seq_length
 
                 endTime = time.time()
                 print(
-                    f"batch {batch}, SDTW Levenshtein loss: {avgDayLoss:>7f}, cer: {cer:>7f}, time/batch: {(endTime - startTime)/100:>7.3f}"
+                    f"batch {batch}, SDTW Levenshtein loss: {avgDayLoss:>7f}, cer: {cer:>7f}, time/batch: {(endTime - startTime)/100:>7.3f} \n"
                 )
                 startTime = time.time()
 
