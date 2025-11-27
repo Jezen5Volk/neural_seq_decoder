@@ -146,12 +146,15 @@ def trainModel(args):
         loss.backward()
         optimizer.step()
         scheduler.step()
-
-        print(f"Batch {batch} Complete; Soft DTW Levenshtein Loss: {loss}")
-
-        del loss, pred #free up this memory
+        
+        #explicitly clear all tensors from this batch
+        del loss, pred, X, y, X_len, y_len, dayIdx
         gc.collect()
         
+        #Empty the cache every 10 batches
+        if batch % 10 == 0: 
+            torch.cuda.empty_cache()
+
         # Eval
         if batch % 100 == 0: 
             with torch.no_grad():
@@ -228,9 +231,6 @@ def trainModel(args):
 
             with open(args["outputDir"] + "/trainingStats.pkl", "wb") as file:
                 pickle.dump(tStats, file)
-            
-            #Empty Cache at the end of eval 
-            torch.cuda.empty_cache()
             
 
 

@@ -19,6 +19,8 @@ def logsumexp_k(tensors, gamma=DEFAULT_GAMMA):
     M, _ = torch.max(scaled_tensors, dim = 0, keepdim = True)
     lse_result = torch.logsumexp(scaled_tensors - M, dim = 0) + M.squeeze(dim = 0)
 
+    del M, scaled_tensors
+
     return lse_result*gamma*-1
         
 
@@ -115,11 +117,15 @@ def batched_soft_edit_distance(
             D_ij,              
             torch.zeros_like(D_ij) #when false, will keep D_ij init value of zero
         )
+
+        del T_del, T_ins, T_sub, D_ij #explicitly delete intermediate tensors
     
 
     # Distance extraction from D matrix
     batch_indices = torch.arange(B, device=input_logprob.device).long()
     final_distances = D[batch_indices, input_lengths.long(), target_lengths.long()]
 
+    del batch_indices, D, cost_mask, C_ij_tilde, C_ij_tilde_raw, insertion_costs, insertion_costs_masked, del_costs, del_costs_raw, input_mask, target_mask, i_indices, j_indices
+    
 
     return final_distances
