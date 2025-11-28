@@ -136,7 +136,7 @@ def trainModel(args):
         pred = model.forward(X, dayIdx)
         
         #Calculate Loss
-        loss_levenshtein = batched_soft_edit_distance(F.log_softmax(pred, dim = -1), adjustedLens, y, y_len, gamma = args["gamma"])/y_len
+        loss_levenshtein = batched_soft_edit_distance(F.log_softmax(pred, dim = -1), adjustedLens, y, y_len, gamma = args["gamma"], maxNLLPenalty = args["maxPenalty"])/y_len
         loss_reg = sequence_length_regularization(F.log_softmax(pred/args["regTemp"], dim = -1), y_len)*args["lambda"]
         loss = loss_levenshtein + loss_reg
         loss = torch.mean(loss)
@@ -180,7 +180,7 @@ def trainModel(args):
                     pred = model.forward(X, testDayIdx)
                     
                     #Calculate Loss
-                    loss_levenshtein = batched_soft_edit_distance(F.log_softmax(pred, dim = -1), adjustedLens, y, y_len, gamma = args["gamma"])/y_len
+                    loss_levenshtein = batched_soft_edit_distance(F.log_softmax(pred, dim = -1), adjustedLens, y, y_len, gamma = args["gamma"], maxNLLPenalty = args['maxPenalty'])/y_len
                     loss_reg = sequence_length_regularization(F.log_softmax(pred/args['regTemp'], dim = -1), y_len)*args["lambda"]
                     loss = loss_levenshtein + loss_reg
                     loss = torch.mean(loss)

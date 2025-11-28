@@ -3,7 +3,7 @@ import torch.nn.functional as F
 
 # Default regularization parameter(s)
 DEFAULT_GAMMA = 0.01
-MAX_NLL_COST = 50.0
+MAX_NLL_COST = 5.0 #To ensure that all three paths have a maximum cost
 DEFAULT_BLANK = 0
 
 def logsumexp_k(tensors, gamma=DEFAULT_GAMMA):
@@ -33,6 +33,7 @@ def batched_soft_edit_distance(
     target_lengths: torch.Tensor, 
     blank_token_id: int = DEFAULT_BLANK,
     gamma: float = DEFAULT_GAMMA,
+    maxNLLPenalty: float = MAX_NLL_COST
 ) -> torch.Tensor:
     """
     Calculates the Batched Soft Levenshtein Edit Distance, 
@@ -73,7 +74,7 @@ def batched_soft_edit_distance(
     target_mask = (j_indices <= target_lengths.unsqueeze(1)).to(dtype) # (B, L2)
     
     # Calculate del cost for all input tokens from probability of token being blank token
-    del_costs_raw = torch.clamp(-input_logprob[:, :, blank_token_id], min = 0.0, max = MAX_NLL_COST) # (B, L1) 
+    del_costs_raw = torch.clamp(-input_logprob[:, :, blank_token_id], min = 0.0, max = maxNLLPenalty) # (B, L1) 
     del_costs = del_costs_raw * input_mask # Zero out costs corresponding to padded/masked parts of the input sequence
 
     # Calculate the cumulative deletion cost for the first column D[i, 0]
@@ -88,7 +89,7 @@ def batched_soft_edit_distance(
     # The mask for C[i, j] is input_mask[i-1] * target_mask[j-1]
     cost_mask = input_mask.unsqueeze(2) * target_mask.unsqueeze(1) # (B, L1, 1) * (B, 1, L2) -> (B, L1, L2)
     
-    C_ij_tilde_raw = torch.clamp(-input_logprob @ (target_1hot).mT, min = 0.0, max = MAX_NLL_COST) # (B, L1, C) @ (B, C, L2) --> (B, L1, L2)
+    C_ij_tilde_raw = torch.clamp(-input_logprob @ (target_1hot).mT, min = 0.0, max = maxNLLPenalty) # (B, L1, C) @ (B, C, L2) --> (B, L1, L2)
     C_ij_tilde = C_ij_tilde_raw*cost_mask # Only calculate cost within true boundaries
     
 

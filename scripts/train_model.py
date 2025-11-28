@@ -11,9 +11,9 @@ args['outputDir'] = root + 'outputs\\' + modelName
 args['datasetPath'] = "C:\\Users\\saman\\Documents\\Classes\\ECE 243A Brain Computer Interfaces\\Final Project\\competitionData\\decoder_dataset.pkl" ##you will need to change this for operating on your system
 args['seqLen'] = 150
 args['maxTimeSeriesLen'] = 1200
-args['batchSize'] = 64
-args['lrStart'] = 0.0005
-args['lrEnd'] = 0.0002
+args['batchSize'] = 32
+args['lrStart'] = 0.05
+args['lrEnd'] = 0.02
 args['nUnits'] = 256
 args['nBatch'] = 10000 #3000
 args['nLayers'] = 5
@@ -27,10 +27,13 @@ args['gaussianSmoothWidth'] = 2.0
 args['strideLen'] = 4
 args['kernelLen'] = 32
 args['bidirectional'] = False
-args['l2_decay'] = 1e-7
-args['lambda'] = 1.0
-args['gamma'] = 0.01
-args['regTemp'] = 0.1
+args['l2_decay'] = 1e-5
+
+#Loss Function Parameters
+args['lambda'] = 1.0 #Strength of regularization penalty for predicting sequences less than the target sequence length
+args['gamma'] = 0.1 #strength of softmin operator
+args['regTemp'] = 0.1 #Temperature of regularization penalty (less than one helps make the regularization penalty more accurate at the start of training)
+args['maxPenalty'] = 5.0 #Upper bound on the negative log loss for the deletion path and the substitution/match path for the soft levenshtein loss
 
 from src.neural_decoder.neural_decoder_trainer_softdtw import trainModel
 
