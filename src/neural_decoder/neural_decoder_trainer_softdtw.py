@@ -136,9 +136,9 @@ def trainModel(args):
         pred = model.forward(X, dayIdx)
         
         #Calculate Loss
-        loss_levenshtein = batched_soft_edit_distance(F.log_softmax(pred, dim = -1), adjustedLens, y, y_len)
-        loss_reg = sequence_length_regularization(F.log_softmax(pred, dim = -1), y_len)
-        loss = loss_levenshtein/y_len + loss_reg*args["lambda"]
+        loss_levenshtein = batched_soft_edit_distance(F.log_softmax(pred, dim = -1), adjustedLens, y, y_len, gamma = args["gamma"])/y_len
+        loss_reg = sequence_length_regularization(F.log_softmax(pred/args["regTemp"], dim = -1), y_len)*args["lambda"]
+        loss = loss_levenshtein + loss_reg
         loss = torch.mean(loss)
 
         # Backpropagation
@@ -160,6 +160,8 @@ def trainModel(args):
             with torch.no_grad():
                 model.eval()
                 allLoss = []
+                allLeven = []
+                allReg = []
                 total_edit_distance = 0
                 total_seq_length = 0
                 val_idx = 0
@@ -178,12 +180,14 @@ def trainModel(args):
                     pred = model.forward(X, testDayIdx)
                     
                     #Calculate Loss
-                    loss_levenshtein = batched_soft_edit_distance(F.log_softmax(pred, dim = -1), adjustedLens, y, y_len)
-                    loss_reg = sequence_length_regularization(F.log_softmax(pred, dim = -1), y_len)
-                    loss = loss_levenshtein/y_len + loss_reg*args["lambda"]
+                    loss_levenshtein = batched_soft_edit_distance(F.log_softmax(pred, dim = -1), adjustedLens, y, y_len, gamma = args["gamma"])/y_len
+                    loss_reg = sequence_length_regularization(F.log_softmax(pred/args['regTemp'], dim = -1), y_len)*args["lambda"]
+                    loss = loss_levenshtein + loss_reg
                     loss = torch.mean(loss)
 
                     allLoss.append(loss.item())
+                    allLeven.append(torch.mean(loss_levenshtein).item())
+                    allReg.append(torch.mean(loss_reg).item())
 
                     for iterIdx in range(pred.shape[0]):
                         decodedSeq = torch.argmax(pred, dim = -1)
@@ -211,12 +215,14 @@ def trainModel(args):
                         total_seq_length += len(trueSeq)
                     val_idx += 1
 
-                avgDayLoss = np.sum(allLoss) / len(testLoader)
+                avgDayLoss = np.sum(allLoss) / len(testLoader) 
+                avgLeven = np.mean(allLeven)
+                avgReg = np.mean(allReg)
                 cer = total_edit_distance / total_seq_length
 
                 endTime = time.time()
                 print(
-                    f"batch {batch}, SDTW Levenshtein loss: {avgDayLoss:>7f}, cer: {cer:>7f}, time/batch: {(endTime - startTime)/100:>7.3f} \n"
+                    f"batch {batch}, Total loss: {avgDayLoss:>7f}, Leven loss: {avgLeven:>7f}, Reg loss: {avgReg:>7f}, cer: {cer:>7f}, time/batch: {(endTime - startTime)/100:>7.3f} \n"
                 )
                 startTime = time.time()
 

@@ -2,7 +2,8 @@ import torch
 import torch.nn.functional as F
 
 # Default regularization parameter(s)
-DEFAULT_GAMMA = 1e-6
+DEFAULT_GAMMA = 0.01
+MAX_NLL_COST = 50.0
 DEFAULT_BLANK = 0
 
 def logsumexp_k(tensors, gamma=DEFAULT_GAMMA):
@@ -56,6 +57,7 @@ def batched_soft_edit_distance(
     device = input_logprob.device
     target_1hot = F.one_hot(target_seqs.long(), C).to(dtype)
 
+   
     # D[b, i, j] holds the soft edit distance for the b-th pair of sequences 
     # seq1[:i] and seq2[:j]. D is initialized with zeros and has dimensions (B, L1+1, L2+1).
     D = torch.zeros((B, L1 + 1, L2 + 1), device=input_logprob.device, dtype=dtype)
@@ -71,7 +73,7 @@ def batched_soft_edit_distance(
     target_mask = (j_indices <= target_lengths.unsqueeze(1)).to(dtype) # (B, L2)
     
     # Calculate del cost for all input tokens from probability of token being blank token
-    del_costs_raw = 1.0 - torch.exp(input_logprob[:, :, blank_token_id]) # (B, L1) 
+    del_costs_raw = torch.clamp(-input_logprob[:, :, blank_token_id], min = 0.0, max = MAX_NLL_COST) # (B, L1) 
     del_costs = del_costs_raw * input_mask # Zero out costs corresponding to padded/masked parts of the input sequence
 
     # Calculate the cumulative deletion cost for the first column D[i, 0]
@@ -82,11 +84,12 @@ def batched_soft_edit_distance(
     insertion_costs_masked = insertion_costs * target_mask # Mask this cost based on the target length.
     D[:, 0, 1:] = torch.cumsum(insertion_costs_masked, dim=1)
 
-    # Substitution/Match Cost C (ensure high cost when input logits do not align with 1hot target)
+    # Substitution/Match Cost C (ensure cost when input logits do not align with 1hot target)
     # The mask for C[i, j] is input_mask[i-1] * target_mask[j-1]
     cost_mask = input_mask.unsqueeze(2) * target_mask.unsqueeze(1) # (B, L1, 1) * (B, 1, L2) -> (B, L1, L2)
-    C_ij_tilde_raw = -input_logprob @ target_1hot.mT # (B, L1, C) @ (B, C, L2) --> (B, L1, L2)
-    C_ij_tilde =  C_ij_tilde_raw*cost_mask # Only calculate cost within true boundaries
+    
+    C_ij_tilde_raw = torch.clamp(-input_logprob @ (target_1hot).mT, min = 0.0, max = MAX_NLL_COST) # (B, L1, C) @ (B, C, L2) --> (B, L1, L2)
+    C_ij_tilde = C_ij_tilde_raw*cost_mask # Only calculate cost within true boundaries
     
 
     # Recurrent Programming to Generate D[i, j]

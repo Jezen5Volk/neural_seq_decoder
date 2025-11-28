@@ -27,6 +27,6 @@ def sequence_length_regularization(
 
 
     seq_len = L1 - torch.sum(torch.exp(input_logprob[:, :, blank_token_id]), dim = -1)
-    reg_penalty = target_lengths/(seq_len + EPSILON) #F.relu(target_lengths - seq_len)**2 #squared distance
+    reg_penalty = F.relu(target_lengths - seq_len)**2 #squared distance
 
     return reg_penalty

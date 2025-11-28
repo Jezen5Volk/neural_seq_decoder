@@ -11,9 +11,9 @@ args['outputDir'] = root + 'outputs\\' + modelName
 args['datasetPath'] = "C:\\Users\\saman\\Documents\\Classes\\ECE 243A Brain Computer Interfaces\\Final Project\\competitionData\\decoder_dataset.pkl" ##you will need to change this for operating on your system
 args['seqLen'] = 150
 args['maxTimeSeriesLen'] = 1200
-args['batchSize'] = 128
-args['lrStart'] = 0.05
-args['lrEnd'] = 0.02
+args['batchSize'] = 64
+args['lrStart'] = 0.0005
+args['lrEnd'] = 0.0002
 args['nUnits'] = 256
 args['nBatch'] = 10000 #3000
 args['nLayers'] = 5
@@ -27,8 +27,10 @@ args['gaussianSmoothWidth'] = 2.0
 args['strideLen'] = 4
 args['kernelLen'] = 32
 args['bidirectional'] = False
-args['l2_decay'] = 1e-5
+args['l2_decay'] = 1e-7
 args['lambda'] = 1.0
+args['gamma'] = 0.01
+args['regTemp'] = 0.1
 
 from src.neural_decoder.neural_decoder_trainer_softdtw import trainModel
 
