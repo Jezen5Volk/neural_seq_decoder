@@ -2,6 +2,7 @@ import os
 import pickle
 import time
 import gc
+import math
 
 from edit_distance import SequenceMatcher # pyright: ignore[reportMissingImports]
 import hydra # type: ignore
@@ -13,7 +14,7 @@ import torch.nn.functional as F
 
 
 import sys
-root = "C:\\Users\\saman\\Documents\\GitHub\\neural_seq_decoder\\" ##you will need to change this for operating on your system
+root = "C:\\Users\\Owenr\\Downloads\\neural_seq_decoder\\" ##you will need to change this for operating on your system
 sys.path.append(root)
 
 from .model import GRUDecoder
@@ -106,6 +107,10 @@ def trainModel(args):
         total_iters=args["nBatch"],
     )
 
+    adapt_state = {
+        "ema_entropy": None
+    }
+
     # --train--
     testLoss = []
     testCER = []
@@ -136,13 +141,33 @@ def trainModel(args):
         pred = model.forward(X, dayIdx)
         
         #Calculate Loss
-        loss_levenshtein = batched_soft_edit_distance(F.log_softmax(pred, dim = -1), adjustedLens, y, y_len, gamma = args["gamma"], maxNLLPenalty = args["maxPenalty"])/y_len
-        loss_reg = sequence_length_regularization(F.log_softmax(pred/args["regTemp"], dim = -1), y_len)*args["lambda"]
-        loss = loss_levenshtein + loss_reg
+        loss_levenshtein = batched_soft_edit_distance(F.log_softmax(pred, dim = -1), adjustedLens, y, y_len, gamma = args["gamma"], maxNLLPenalty = args["maxPenalty"])
+
+        # Entropy
+        p = torch.exp(F.log_softmax(pred, dim = -1))
+        entropy_avg = -(p * F.log_softmax(pred, dim = -1)).sum(dim=-1).mean()
+
+        # EMA entropy
+        with torch.no_grad():
+            if adapt_state["ema_entropy"] is None:
+                adapt_state["ema_entropy"] = entropy_avg.detach()
+            else:
+                adapt_state["ema_entropy"] = (
+                    0.95 * adapt_state["ema_entropy"]
+                    + 0.05 * entropy_avg.detach()
+                )
+
+        lam_ent, lam_len = adaptive_lambdas(entr_avg=adapt_state["ema_entropy"], batch_idx=batch, nClasses=args["nClasses"], device=device)
+
+        loss_reg = sequence_length_regularization(F.log_softmax(pred/args["regTemp"], dim = -1), y_len)*lam_len
+        loss_entr =  2000 * lam_ent * entropy_avg
+
+        loss = loss_levenshtein + loss_reg + loss_entr
         loss = torch.mean(loss)
 
         # Backpropagation
         optimizer.zero_grad()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         loss.backward()
         optimizer.step()
         scheduler.step()
@@ -157,11 +182,13 @@ def trainModel(args):
 
         # Eval
         if batch % 100 == 0: 
+            print(f"[Batch {batch}]: entropy_avg={entropy_avg.detach().item():.4f} lam_ent={lam_ent:.4f} lam_len={lam_len:.4f}")
             with torch.no_grad():
                 model.eval()
                 allLoss = []
                 allLeven = []
                 allReg = []
+                allEntr = []
                 total_edit_distance = 0
                 total_seq_length = 0
                 val_idx = 0
@@ -180,14 +207,22 @@ def trainModel(args):
                     pred = model.forward(X, testDayIdx)
                     
                     #Calculate Loss
-                    loss_levenshtein = batched_soft_edit_distance(F.log_softmax(pred, dim = -1), adjustedLens, y, y_len, gamma = args["gamma"], maxNLLPenalty = args['maxPenalty'])/y_len
-                    loss_reg = sequence_length_regularization(F.log_softmax(pred/args['regTemp'], dim = -1), y_len)*args["lambda"]
-                    loss = loss_levenshtein + loss_reg
+                    loss_levenshtein = batched_soft_edit_distance(F.log_softmax(pred, dim = -1), adjustedLens, y, y_len, gamma = args["gamma"], maxNLLPenalty = args['maxPenalty'])
+                    
+                    loss_reg = sequence_length_regularization(F.log_softmax(pred/args['regTemp'], dim = -1), y_len)*lam_len
+
+                    p = torch.exp(F.log_softmax(pred, dim = -1))
+                    entropy_avg = -(p * F.log_softmax(pred, dim = -1)).sum(dim=-1).mean()
+
+                    loss_entr = 2000 * lam_ent * entropy_avg
+
+                    loss = loss_levenshtein + loss_reg + loss_entr
                     loss = torch.mean(loss)
 
                     allLoss.append(loss.item())
                     allLeven.append(torch.mean(loss_levenshtein).item())
                     allReg.append(torch.mean(loss_reg).item())
+                    allEntr.append(torch.mean(loss_entr).item())
 
                     for iterIdx in range(pred.shape[0]):
                         decodedSeq = torch.argmax(pred, dim = -1)
@@ -218,11 +253,12 @@ def trainModel(args):
                 avgDayLoss = np.sum(allLoss) / len(testLoader) 
                 avgLeven = np.mean(allLeven)
                 avgReg = np.mean(allReg)
+                avgEntr = np.mean(allEntr)
                 cer = total_edit_distance / total_seq_length
 
                 endTime = time.time()
                 print(
-                    f"batch {batch}, Total loss: {avgDayLoss:>7f}, Leven loss: {avgLeven:>7f}, Reg loss: {avgReg:>7f}, cer: {cer:>7f}, time/batch: {(endTime - startTime)/100:>7.3f} \n"
+                    f"batch {batch}, Total loss: {avgDayLoss:>7f}, Leven loss: {avgLeven:>7f}, Reg loss: {avgReg:>7f} Entr Loss {avgEntr:>7f}, cer: {cer:>7f}, time/batch: {(endTime - startTime)/100:>7.3f} \n"
                 )
                 startTime = time.time()
 
@@ -237,7 +273,6 @@ def trainModel(args):
 
             with open(args["outputDir"] + "/trainingStats.pkl", "wb") as file:
                 pickle.dump(tStats, file)
-            
 
 
 def loadModel(modelDir, nInputLayers=24, device="cuda"):
@@ -262,6 +297,47 @@ def loadModel(modelDir, nInputLayers=24, device="cuda"):
     model.load_state_dict(torch.load(modelWeightPath, map_location=device))
     return model
 
+def adaptive_lambdas(entr_avg, batch_idx, nClasses, device):
+    import math
+    if torch.is_tensor(entr_avg):
+        entr_val = float(entr_avg.detach().cpu())
+    else:
+        entr_val = float(entr_avg)
+
+    BOOTSTRAP_END = 200
+    K = nClasses
+    target_low = 1.0
+    target_high = 0.85 * math.log(K)
+
+    ENT_MIN = 0.10
+    ENT_MAX = 1.20
+    LEN_MIN = 0.02
+    LEN_MAX = 1.00
+
+    if batch_idx < BOOTSTRAP_END:
+        lam_ent = 0.60
+        lam_len = 0.10
+        return torch.tensor(lam_ent, device=device), torch.tensor(lam_len, device=device)
+
+    # entropy too low increase lam_ent decrease lam_len
+    if entr_val < target_low:
+        lam_ent = 2.0 * (target_low - entr_val) + 0.8
+        lam_len = 0.6 * LEN_MAX
+
+    # entropy too high decrease lam_ent and increase lam_len
+    elif entr_val > target_high:
+        lam_ent = 0.5 * (entr_val - target_high)
+        lam_len = LEN_MIN + 1.0 * min(1.0, entr_val / target_high)
+
+    # entropy is good decrease lam_len
+    else:
+        lam_ent = 0.20 * (target_high - entr_val)
+        lam_len = LEN_MIN + 2.5 * min(1.0, entr_val / target_high)
+
+    lam_ent = torch.clamp(torch.tensor(lam_ent, device=device), ENT_MIN, ENT_MAX)
+    lam_len = torch.clamp(torch.tensor(lam_len, device=device), LEN_MIN, LEN_MAX)
+
+    return lam_ent, lam_len
 
 @hydra.main(version_base="1.1", config_path="conf", config_name="config")
 def main(cfg):
