@@ -141,7 +141,7 @@ class GRUDecoderLayerNormalization(nn.Module):
         gaussianSmoothWidth=0,
         bidirectional=False,
     ):
-        super(GRUDecoder, self).__init__()
+        super(GRUDecoderLayerNormalization, self).__init__()
 
         # Defining the number of layers and the nodes in each layer
         self.layer_dim = layer_dim
